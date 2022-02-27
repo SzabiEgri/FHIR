@@ -6,8 +6,10 @@ require("./config/database").connect();
 const express = require("express");
 const JSONSchemaValidator = require('./fhir-json-schema-validator')
 const Boom = require('boom');
+const cors = require('cors')
 
 const app = express();
+app.use(cors())
 
 const TOKEN_KEY = "tpuoonnjlwagecvwyist"
 
@@ -80,7 +82,8 @@ app.post("/login", async (req, res) => {
   try {
     // Get user input
     const { email, password } = req.body;
-
+    console.log(email)
+    console.log(password)
     // Validate user input
     if (!(email && password)) {
       res.status(400).send("All input is required");
@@ -101,30 +104,43 @@ app.post("/login", async (req, res) => {
       // save user token
       user.token = token;
 
+      var dataTypes = []
+      //fetch the names of all available collections
+      let client = await MongoClient.connect('mongodb://localhost:27017');
+      await client.db('FHIR').listCollections().toArray(function(err, collInfos) {
+        console.log(collInfos.length)
+        collInfos.forEach(coll => {
+          if(coll.name !== "users"){
+            dataTypes.push(coll.name)
+          }
+         
+        });
+        res.status(200).json({"dataTypes":dataTypes,"user":user});
+      });
+      console.log("Hey")
+      console.log(dataTypes)
+      console.log("Ho")
       // user
-      res.status(200).json(user);
+     
     }
-    res.status(400).send("Invalid Credentials");
+    else{
+      res.status(400).send("Invalid Credentials");
+    }
+    
   } catch (err) {
     console.log(err);
   }
 });
 
-app.get("/patientList", auth, async (req, res) => {
+app.get("/getDataList", auth, async (req, res) => {
+  const {dataType} = req.query
   let client = await MongoClient.connect('mongodb://localhost:27017');
-  let patients = client.db('FHIR').collection('patients');
+  let collection = client.db('FHIR').collection(dataType);
+ 
+ 
 
-  // fetch all patients
-  return await patients.find({},
-    {
-      projection: {
-        _id: 0,
-        id: 1,
-        name: 1,
-        gender: 1,
-      }
-    }
-  ).toArray(function (err, result) {
+  // fetch all data
+  return await collection.find({}).toArray(function (err, result) {
     if (err) {
       res.send(err);
     } else {
@@ -134,75 +150,59 @@ app.get("/patientList", auth, async (req, res) => {
   });
 });
 
-app.get("/getPatient", auth, async (req,res) => {
-
-  const { patientId } = req.body;
-  console.log(patientId);
+app.get("/getData", auth, async (req,res) => {
+  const { dataId, dataType } = req.query;
   let client = await MongoClient.connect('mongodb://localhost:27017');
-  let patients = client.db('FHIR').collection('patients');
+  let collection = client.db('FHIR').collection(dataType);
 
-  let patient = await patients.findOne(
-    {
-      id: patientId
-    },
-    {
-      projection : {
-        _id: 0,
-        id:1,	
-        name: 1,
-        gender : 1,
-      }
-    }
-  );
-  console.log(patient)
-  return patient;
+  await collection.findOne({"id":dataId}, function(err, result) { 
+    if (err) throw err;
+    res.send({msg:"document found", data:result})
+});
 });
 
-app.delete("/deletePatient", auth, async (req,res)=>{
-  const { patientId } = req.body;
- 
+app.delete("/deleteData", auth, async (req,res)=>{
+  const { dataId, dataType } = req.query;
+  console.log(dataId)
   const client = await MongoClient.connect('mongodb://localhost:27017');
-  await client.db('FHIR').collection('patients').deleteOne({"id":patientId}, function(err, result) { 
+  await client.db('FHIR').collection(dataType).deleteOne({"id":dataId}, function(err, result) { 
     if (err) throw err;
     console.log("Document deleted")
-    res.send({msg:"document deleted"})
+    res.send({msg:"document deleted", dataId:dataId, dataType:dataType})
 });
  
   
 });
 
-app.post("/postPatient", auth, async (req,res)=>{
+app.post("/postData", auth, async (req,res)=>{
   try {
+    const dataToPost = req.body;
+    console.log(dataToPost)
     const client = await MongoClient.connect('mongodb://localhost:27017');
-    let patients = client.db('FHIR').collection('patients');
-
-    const patientData = req.body
-   
-
+    dataType=dataToPost["resourceType"]
+    console.log(dataType)
+    let collection = client.db('FHIR').collection(dataType);
+    
     const validator = new JSONSchemaValidator;
-    let validationErrors = validator.validate(patientData)
+    let validationErrors = validator.validate(dataToPost)
     if (validationErrors.length > 0){
       console.log(validationErrors)
       console.log("Furhter error handling is needed!")
       const error = Boom.badRequest("The uploaded JSON does not fit the validation criterias");
       error.output.statusCode = 400;   
       error.output.payload["errors"] = validationErrors;
-      return error;	
+      res.send(error);	
     }
     else{
-      patients.insertOne(patientData)
-      console.log("Patient added succsessfully")
-      res.send({msg:"Patient added successfully"})
+      collection.insertOne(dataToPost)
+      console.log("Document added succsessfully")
+      res.send({msg:"Document added successfully"})
     }
     
-    return patientData;
+    return dataToPost;
   } catch (e) {
     console.error(e.message);
     return Boom.internal(e);
-  } finally {
-    if (client && client.close){
-      client.close();
-    }
   }
 });
 
