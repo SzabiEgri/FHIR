@@ -19,11 +19,6 @@ const auth = require("./middleware/auth");
 const User = require("./model/user");
 const res = require("express/lib/response");
 
-
-
-app.get("/welcome", auth, (req, res) => {
-  res.status(200).send("Welcome 🙌 ");
-});
 // Register
 app.post("/register", async (req, res) => {
 
@@ -31,6 +26,8 @@ app.post("/register", async (req, res) => {
   try {
     // Get user input
     const { first_name, last_name, email, password } = req.body;
+
+    console.log(req.body)
 
     // Validate user input
     if (!(email && password && first_name && last_name)) {
@@ -68,7 +65,7 @@ app.post("/register", async (req, res) => {
     user.token = token;
 
     // return new user
-    res.status(201).json(user);
+    res.status(200).json(user);
   } catch (err) {
     console.log(err);
   }
@@ -117,10 +114,6 @@ app.post("/login", async (req, res) => {
         });
         res.status(200).json({"dataTypes":dataTypes,"user":user});
       });
-      console.log("Hey")
-      console.log(dataTypes)
-      console.log("Ho")
-      // user
      
     }
     else{
@@ -144,7 +137,7 @@ app.get("/getDataList", auth, async (req, res) => {
     if (err) {
       res.send(err);
     } else {
-
+      delete result["_id"]
       res.send(JSON.stringify(result));
     }
   });
@@ -155,8 +148,11 @@ app.get("/getData", auth, async (req,res) => {
   let client = await MongoClient.connect('mongodb://localhost:27017');
   let collection = client.db('FHIR').collection(dataType);
 
-  await collection.findOne({"id":dataId}, function(err, result) { 
+  await collection.findOne({"id":dataId},{_id:0}, function(err, result) { 
     if (err) throw err;
+    delete result["_id"]
+    delete result["id"]
+
     res.send({msg:"document found", data:result})
 });
 });
@@ -205,6 +201,42 @@ app.post("/postData", auth, async (req,res)=>{
     return Boom.internal(e);
   }
 });
+
+app.post("/updateData", auth, async (req,res)=>{
+  const validator = new JSONSchemaValidator;
+  try {
+    const dataToUpdate = req.body;
+
+    const client = await MongoClient.connect('mongodb://localhost:27017');
+    dataType=dataToUpdate["resourceType"]
+    console.log(dataType)
+    if (typeof dataType === 'undefined'){
+      console.log("could not update patient")
+      res.status(400).send("missing data type");	
+    }
+
+    else{    
+    let collection = client.db('FHIR').collection(dataType);
+    let validationErrors = validator.validate(dataToUpdate)
+    if (validationErrors.length > 0){
+      console.log(validationErrors)
+      console.log("Furhter error handling is needed!")
+      res.status(400).send("validation errors");
+    }
+    else{
+      collection.findOneAndReplace({id:dataToUpdate["id"]},dataToUpdate)
+      console.log("Document updated succsessfully")
+      res.send({msg:"Document updated successfully"})
+    }
+    
+    return dataToUpdate;
+    }
+    
+  } catch (e) {
+    console.error(e.message);
+    return Boom.internal(e);
+  }
+})
 
 
 

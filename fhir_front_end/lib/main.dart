@@ -32,7 +32,7 @@ class CatalogPage extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text('Catalog'),
+        title: Text( globals.dataType +' Catalog'),
       ),
       body: Center(
         child: CatalogList(),
@@ -102,7 +102,12 @@ Future<http.Response> pickFile(BuildContext context, String dataType) async{
   }
 }
 
-void loadPage(BuildContext context, StatelessWidget page){
+void loadPage(BuildContext context, StatelessWidget page, String dataType){
+  globals.dataType = dataType;
+  Navigator.push(context, MaterialPageRoute(builder: (context) => page));
+}
+
+void loadStatefulPage(BuildContext context, StatefulWidget page){
   Navigator.push(context, MaterialPageRoute(builder: (context) => page));
 }
 
@@ -121,10 +126,10 @@ class CatalogList extends StatefulWidget {
 
 class _CatalogListState extends State<CatalogList> {
 
-  List<Patient> patients;
+  List<FHIR_Data> fhirDataList;
 
 
-  List<Patient> displayedPatients;
+  List<FHIR_Data> displayedFhirDataList;
 
   /// The controller to keep track of search field content and changes.
   final TextEditingController searchController = TextEditingController();
@@ -144,16 +149,14 @@ class _CatalogListState extends State<CatalogList> {
     final headers = {HttpHeaders.contentTypeHeader: 'application/json','x-access-token':globals.jwt};
     http.Response response = await http.get(uri,headers: headers);
 
-    List<Map<String, dynamic>> newPatientsRaw =
+    List<Map<String, dynamic>> newFhirDataRaw =
     json.decode(response.body).cast<Map<String, dynamic>>();
-    List<Patient> newPatients =
-    newPatientsRaw.map((patientData) => Patient.fromJson(patientData)).toList();
-    for(var patient in newPatients){
-      patient.processName();
-    }
+    List<FHIR_Data> newFhirData =
+    newFhirDataRaw.map((fhirData) => FHIR_Data.fromJson(fhirData)).toList();
+
     setState(() {
-      patients = newPatients;
-      displayedPatients = patients;
+      fhirDataList = newFhirData;
+      displayedFhirDataList = fhirDataList;
     });
   }
 
@@ -161,29 +164,40 @@ class _CatalogListState extends State<CatalogList> {
   void _search() {
     if (searchController.text == '') {
       setState(() {
-        displayedPatients = patients;
+        displayedFhirDataList = fhirDataList;
       });
     } else {
-      List<Patient> filteredPatients = patients
-          .where((patient) => patient.name
+      List<FHIR_Data> filteredFhirData = fhirDataList
+          .where((fhirData) => fhirData.data["id"]
           .toLowerCase()
           .contains(searchController.text.toLowerCase()))
           .toList();
       setState(() {
-        displayedPatients = filteredPatients;
+        displayedFhirDataList = filteredFhirData;
       });
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    return displayedPatients != null
+    return displayedFhirDataList != null
         ? Column(
       children: <Widget>[
+        new Container(padding:const EdgeInsets.all(8.0) ,
+            child: DropdownButton(
+          value: globals.dataType,
+          items: globals.availableDataTypes.map((item){
+            return new DropdownMenuItem<String>(value:item,
+                child: new Text(item, style: TextStyle(fontFamily: "Gotham")));
+          }).toList(),
+          onChanged: (String newValue) {
+            loadPage(context, CatalogPage(), newValue);
+          },
+        )),
         new Padding(
           padding: const EdgeInsets.symmetric(horizontal: 24.0),
           child: TextField(
-            decoration: InputDecoration(hintText: 'Search for patients...'),
+            decoration: InputDecoration(hintText: 'Search by ID...'),
             controller: searchController,
           ),
         ),
@@ -195,20 +209,18 @@ class _CatalogListState extends State<CatalogList> {
                 elevation: 2.0,
                 child: ListTile(
                     title: Text(
-                      displayedPatients[index].name,
+                      displayedFhirDataList[index].data["id"],
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                     ),
-                    subtitle: Text(
-                        displayedPatients[index].gender),
                     onTap: () {
                       Navigator.of(context).push(MaterialPageRoute(
                           builder: (BuildContext context) {
-                            return DetailPage(displayedPatients[index].id);
+                            return DetailPage(displayedFhirDataList[index].data["id"]);
                           }));
                     }),
               ),
-              itemCount: displayedPatients.length,
+              itemCount: displayedFhirDataList.length,
             ),
           ),
         ),
@@ -218,55 +230,41 @@ class _CatalogListState extends State<CatalogList> {
   }
 }
 
-class Patient {
-  final String id;
-  String name;
-  final String gender;
-  String familyName;
-  List<dynamic> givenNamesRaw;
-  String givenNames='';
-  var rawName;
-
-  
-  Patient.fromJson(Map<String, dynamic> json)
-      : id = json['id'],
-        gender = json['gender'],
-        rawName = json['name'];
-
-  processName(){
-    familyName = rawName[0]["family"];
-    givenNamesRaw = rawName[0]["given"];
-    name = '';
-    for (var givenName in givenNamesRaw){
-        name = name+givenName.toString()+" ";
-        givenNames = givenNames + givenName.toString() + " ";
-    }
-    name = name + familyName;
-  }
+class FHIR_Data {
+  final Map data;
+  FHIR_Data.fromJson(Map<String, dynamic> json)
+      : data = json;
 
 }
 
 class DetailPage extends StatefulWidget {
-  final String patientId;
+  final String fhirDataId;
 
-  DetailPage(this.patientId);
+  DetailPage(this.fhirDataId);
 
   @override
-  _DetailPageState createState() => _DetailPageState(this.patientId);
+  _DetailPageState createState() => _DetailPageState(this.fhirDataId);
+}
+
+String getPrettyJSONString(jsonObject){
+  var encoder = new JsonEncoder.withIndent("     ");
+  return encoder.convert(jsonObject);
 }
 
 class _DetailPageState extends State<DetailPage>{
-  Patient patient;
+  FHIR_Data fhirData;
+  var title;
   /// Flag indicating whether the name field is nonempty.
   bool fieldHasContent = false;
 
+ // final TextEditingController jsonTextController = TextEditingController();
   /// The controller to keep track of name field content and changes.
-  final TextEditingController nameController = TextEditingController();
+  final TextEditingController jsonStringController = TextEditingController();
 
   /// Kicks off API fetch on creation.
-  _DetailPageState(String patientId) {
-    _fetchDataDetails(patientId, globals.dataType);
-    nameController.addListener(_handleTextChange);
+  _DetailPageState(String fhirDataId) {
+    title=fhirDataId;
+    _fetchDataDetails(fhirDataId, globals.dataType);
   }
 
  
@@ -281,30 +279,24 @@ class _DetailPageState extends State<DetailPage>{
     http.Response response = await http.get(uri,headers: headers);
 
     var jsonResponse = jsonDecode(response.body);
-    var newPatientRaw = jsonResponse["data"];
+    var newFHIRDataRaw = jsonResponse["data"];
+    print(newFHIRDataRaw);
 
-
-    Patient newPatient = Patient.fromJson(newPatientRaw);
-    newPatient.processName();
+    FHIR_Data newFHIRData = FHIR_Data.fromJson(newFHIRDataRaw);
     setState(() {
-      patient = newPatient;
+      fhirData = newFHIRData;
+      jsonStringController.text=getPrettyJSONString(newFHIRDataRaw);
     });
   }
 
-
-  void _handleTextChange() {
-    setState(() {
-      fieldHasContent = nameController.text != '';
-    });
-  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text(patient?.name ?? ''),
+        title: Text(title ?? ''),
       ),
-      body: patient != null
+      body: fhirData != null
           ? new Center(
         child: new SingleChildScrollView(
           child: Padding(
@@ -317,11 +309,27 @@ class _DetailPageState extends State<DetailPage>{
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                       crossAxisAlignment: CrossAxisAlignment.center,
-                      children: <Widget>[
-                        _BodySection('Gender', patient.gender),
-                        _BodySection('Family name', patient.familyName),
-                        _BodySection('Given names', patient.givenNames),
-                        ElevatedButton(onPressed: ()=> deleteData(context,patient.id,globals.dataType ), child: Text("Delete"))
+                      children:[
+                        Container(
+                          child:TextFormField(
+                            controller: jsonStringController,
+                            keyboardType: TextInputType.multiline,
+                            maxLines: null,
+                          ),
+                          height: 700,
+
+                        ),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.center, //Center Row contents horizontally,
+                          children: [
+
+                          Container(child: ElevatedButton(onPressed: ()=> deleteData(context,title,globals.dataType ),
+                              child: Text("Delete")),margin:  EdgeInsets.all(10)),
+                          Container(child: ElevatedButton(onPressed: ()=> updateData(context,title,globals.dataType,jsonStringController),
+                              child: Text("Edit")),margin:  EdgeInsets.all(10))
+
+                        ],)
+
 
                       ],
                     ),
@@ -334,6 +342,43 @@ class _DetailPageState extends State<DetailPage>{
     );
   }
 }
+
+void updateData(BuildContext context, String dataId, String dataType, TextEditingController jsonTextController) async{
+  final uri = Uri.http('localhost:4001','/updateData');
+  var jsonString = jsonTextController.text;
+  http.Response response = await http.post(
+     uri,
+      headers: {"Content-Type": "application/json",'x-access-token':globals.jwt},
+      body: jsonString);
+  print(response.statusCode);
+  print(response.body);
+
+  if (response.statusCode == 200){
+    showDialog(context: context,
+        builder: (_) => AlertDialog(
+            title: Text("Success"),
+            content: Text("JSON file updated successfully"),
+            actions: [
+              FlatButton(onPressed: ()=>{
+                refreshPage(context,CatalogPage())
+              }, child: Text("Accept"))
+            ]
+        ));
+  }
+  else{
+    showDialog(context: context,
+        builder: (_) => AlertDialog(
+            title: Text("Failed"),
+            content: Text("Could not update data file"),
+            actions: [
+              FlatButton(onPressed: ()=>{
+                refreshPage(context,CatalogPage())
+              }, child: Text("Accept"))
+            ]
+        ));
+  }
+}
+
 void deleteData(BuildContext context, String dataId, String dataType)async {
   final queryParameters ={
     "dataType":dataType,
@@ -528,6 +573,33 @@ class _LoginScreenState extends State<LoginScreen> {
       ),
     );
   }
+  Widget _buildSignupBtn() {
+    return GestureDetector(
+      onTap: () => loadStatefulPage(context, SignupScreen()),
+      child: RichText(
+        text: TextSpan(
+          children: [
+            TextSpan(
+              text: 'Don\'t have an Account? ',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 18.0,
+                fontWeight: FontWeight.w400,
+              ),
+            ),
+            TextSpan(
+              text: 'Sign Up',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 18.0,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
   Future<http.Response> login(BuildContext context) async{
     String email = emailTextEditorController.text.toString();
@@ -545,7 +617,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
     print(response.statusCode);
     if (response.statusCode == 200){
-      loadPage(context, CatalogPage());
+      loadPage(context, CatalogPage(),"Patient");
       var jsonResponse = jsonDecode(response.body);
       var token = jsonResponse["user"]["token"];
       print(jsonResponse);
@@ -626,7 +698,300 @@ class _LoginScreenState extends State<LoginScreen> {
                       ),
                       _buildPasswordTF(),
                       _buildForgotPasswordBtn(),
-                      _buildLoginBtn()
+                      _buildLoginBtn(),
+                      _buildSignupBtn()
+                    ],
+                  ),
+                ),
+              )
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class SignupScreen extends StatefulWidget {
+  @override
+  _SignupScreenState createState() => _SignupScreenState();
+}
+
+class _SignupScreenState extends State<SignupScreen> {
+
+  final emailTextEditorController = TextEditingController();
+  final passwordTextEditorController = TextEditingController();
+  final firstNameTextEditorController = TextEditingController();
+  final lastNameTextEditorController = TextEditingController();
+
+
+
+  Future<http.Response> signup(BuildContext context) async{
+    String email = emailTextEditorController.text.toString();
+    String password = passwordTextEditorController.text.toString();
+    String firstName = firstNameTextEditorController.text.toString();
+    String lastName = lastNameTextEditorController.text.toString();
+    Map data = {
+      "email" : email,
+      "password" : password,
+      "first_name":firstName,
+      "last_name":lastName,
+    };
+    var body = json.encode(data);
+    http.Response response = await http.post(
+        "http://localhost:4001/register",
+        headers: {"Content-Type": "application/json"},
+        body:body
+    );
+
+    print(response.statusCode);
+    if (response.statusCode == 200){
+      loadStatefulPage(context, LoginScreen());
+      var jsonResponse = jsonDecode(response.body);
+      var token = jsonResponse["user"]["token"];
+      print(jsonResponse);
+      globals.availableDataTypes=jsonResponse["dataTypes"];
+      print(token);
+      print(globals.availableDataTypes);
+      globals.jwt=token;
+
+    }
+    else{
+      print("Sign up failed, handling required");
+      emailTextEditorController.clear();
+      passwordTextEditorController.clear();
+      showDialog(context: context,
+          builder: (_) => AlertDialog(
+              title: Text("Error"),
+              content: Text("The user already exists"),
+              actions: [
+                FlatButton(onPressed: ()=>{
+                  Navigator.pop(context)
+                }, child: Text("Accept"))
+              ]
+          ));
+    }
+
+
+  }
+
+  Widget _buildEmailTF() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Text(
+          'Email',
+          style: kLabelStyle,
+        ),
+        SizedBox(height: 10.0),
+        Container(
+          alignment: Alignment.centerLeft,
+          decoration: kBoxDecorationStyle,
+          height: 60.0,
+          child: TextField(
+            controller: emailTextEditorController,
+            keyboardType: TextInputType.emailAddress,
+            style: TextStyle(
+              color: Colors.white,
+              fontFamily: 'OpenSans',
+            ),
+            decoration: InputDecoration(
+              border: InputBorder.none,
+              contentPadding: EdgeInsets.only(top: 14.0),
+              prefixIcon: Icon(
+                Icons.email,
+                color: Colors.white,
+              ),
+              hintText: 'Enter your Email',
+              hintStyle: kHintTextStyle,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+  Widget _buildFirstNameTF() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Text(
+          'First Name',
+          style: kLabelStyle,
+        ),
+        SizedBox(height: 10.0),
+        Container(
+          alignment: Alignment.centerLeft,
+          decoration: kBoxDecorationStyle,
+          height: 60.0,
+          child: TextField(
+            controller: firstNameTextEditorController,
+            style: TextStyle(
+              color: Colors.white,
+              fontFamily: 'OpenSans',
+            ),
+            decoration: InputDecoration(
+              border: InputBorder.none,
+              contentPadding: EdgeInsets.only(top: 14.0),
+              hintText: 'Enter your first name',
+              hintStyle: kHintTextStyle,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+  Widget _buildLastNameTF() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Text(
+          'Last Name',
+          style: kLabelStyle,
+        ),
+        SizedBox(height: 10.0),
+        Container(
+          alignment: Alignment.centerLeft,
+          decoration: kBoxDecorationStyle,
+          height: 60.0,
+          child: TextField(
+            controller: lastNameTextEditorController,
+            style: TextStyle(
+              color: Colors.white,
+              fontFamily: 'OpenSans',
+            ),
+            decoration: InputDecoration(
+              border: InputBorder.none,
+              contentPadding: EdgeInsets.only(top: 14.0),
+              hintText: 'Enter your last name',
+              hintStyle: kHintTextStyle,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildPasswordTF() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Text(
+          'Password',
+          style: kLabelStyle,
+        ),
+        SizedBox(height: 10.0),
+        Container(
+          alignment: Alignment.centerLeft,
+          decoration: kBoxDecorationStyle,
+          height: 60.0,
+          child: TextField(
+            controller: passwordTextEditorController,
+            obscureText: true,
+            style: TextStyle(
+              color: Colors.white,
+              fontFamily: 'OpenSans',
+            ),
+            decoration: InputDecoration(
+              border: InputBorder.none,
+              contentPadding: EdgeInsets.only(top: 14.0),
+              prefixIcon: Icon(
+                Icons.lock,
+                color: Colors.white,
+              ),
+              hintText: 'Enter your Password',
+              hintStyle: kHintTextStyle,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildLoginBtn() {
+    return Container(
+      padding: EdgeInsets.symmetric(vertical: 25.0),
+      width: double.infinity,
+      child: RaisedButton(
+        elevation: 5.0,
+        onPressed: () => signup(context),
+        padding: EdgeInsets.all(15.0),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(30.0),
+        ),
+        color: Colors.white,
+        child: Text(
+          'SIGN UP',
+          style: TextStyle(
+            color: Color(0xFF527DAA),
+            letterSpacing: 1.5,
+            fontSize: 18.0,
+            fontWeight: FontWeight.bold,
+            fontFamily: 'OpenSans',
+          ),
+        ),
+      ),
+    );
+  }
+
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: AnnotatedRegion<SystemUiOverlayStyle>(
+        value: SystemUiOverlayStyle.light,
+        child: GestureDetector(
+          onTap: () => FocusScope.of(context).unfocus(),
+          child: Stack(
+            children: <Widget>[
+              Container(
+                height: double.infinity,
+                width: double.infinity,
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      Color(0xFF73AEF5),
+                      Color(0xFF61A4F1),
+                      Color(0xFF478DE0),
+                      Color(0xFF398AE5),
+                    ],
+                    stops: [0.1, 0.4, 0.7, 0.9],
+                  ),
+                ),
+              ),
+              Container(
+                height: double.infinity,
+                child: SingleChildScrollView(
+                  physics: AlwaysScrollableScrollPhysics(),
+                  padding: EdgeInsets.symmetric(
+                    horizontal: 40.0,
+                    vertical: 120.0,
+                  ),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: <Widget>[
+                      Text(
+                        'Sign Up',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontFamily: 'OpenSans',
+                          fontSize: 30.0,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      SizedBox(height: 30.0),
+                      _buildEmailTF(),
+                      SizedBox(height: 30.0),
+                      _buildFirstNameTF(),
+                      SizedBox(height: 30.0),
+                      _buildLastNameTF(),
+                      SizedBox(
+                        height: 30.0,
+                      ),
+                      _buildPasswordTF(),
+                      _buildLoginBtn(),
+
                     ],
                   ),
                 ),
